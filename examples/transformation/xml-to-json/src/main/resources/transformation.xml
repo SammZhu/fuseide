@@ -13,10 +13,6 @@
             <b>custId</b>
         </field>
         <field>
-            <a>header.orderNum</a>
-            <b>orderId</b>
-        </field>
-        <field>
             <a>header.status</a>
             <b>priority</b>
         </field>
@@ -24,14 +20,14 @@
             <a>orderItems.item</a>
             <b>lineItems</b>
         </field>
+        <field>
+            <a>header.orderNum</a>
+            <b>orderId</b>
+        </field>
     </mapping>
     <mapping>
         <class-a>abcorder.ABCOrder$OrderItems$Item</class-a>
         <class-b>xyzorder.LineItem</class-b>
-        <field>
-            <a>id</a>
-            <b>itemId</b>
-        </field>
         <field>
             <a>price</a>
             <b>cost</b>
@@ -39,6 +35,10 @@
         <field>
             <a>quantity</a>
             <b>amount</b>
+        </field>
+        <field>
+            <a>id</a>
+            <b>itemId</b>
         </field>
     </mapping>
     <mapping>

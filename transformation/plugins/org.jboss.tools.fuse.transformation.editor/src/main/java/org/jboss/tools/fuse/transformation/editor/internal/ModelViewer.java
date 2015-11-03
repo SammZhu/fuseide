@@ -18,14 +18,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-
 import org.eclipse.jface.layout.GridDataFactory;
 import org.eclipse.jface.layout.GridLayoutFactory;
 import org.eclipse.jface.preference.IPreferenceStore;
 import org.eclipse.jface.util.LocalSelectionTransfer;
 import org.eclipse.jface.viewers.ColumnViewerToolTipSupport;
-import org.eclipse.jface.viewers.DecorationOverlayIcon;
-import org.eclipse.jface.viewers.IDecoration;
 import org.eclipse.jface.viewers.IStructuredSelection;
 import org.eclipse.jface.viewers.ITreeContentProvider;
 import org.eclipse.jface.viewers.StructuredSelection;
@@ -34,7 +31,6 @@ import org.eclipse.jface.viewers.StyledString;
 import org.eclipse.jface.viewers.TreeViewer;
 import org.eclipse.jface.viewers.Viewer;
 import org.eclipse.jface.viewers.ViewerCell;
-import org.eclipse.jface.viewers.ViewerComparator;
 import org.eclipse.jface.viewers.ViewerFilter;
 import org.eclipse.swt.SWT;
 import org.eclipse.swt.dnd.DND;
@@ -60,10 +56,10 @@ import org.eclipse.swt.widgets.Text;
 import org.eclipse.swt.widgets.ToolBar;
 import org.eclipse.swt.widgets.ToolItem;
 import org.jboss.tools.fuse.transformation.editor.Activator;
-import org.jboss.tools.fuse.transformation.editor.internal.util.TransformationConfig;
+import org.jboss.tools.fuse.transformation.editor.internal.util.TransformationManager;
+import org.jboss.tools.fuse.transformation.editor.internal.util.TransformationManager.Event;
 import org.jboss.tools.fuse.transformation.editor.internal.util.Util;
 import org.jboss.tools.fuse.transformation.editor.internal.util.Util.Colors;
-import org.jboss.tools.fuse.transformation.editor.internal.util.Util.Decorations;
 import org.jboss.tools.fuse.transformation.editor.internal.util.Util.Images;
 import org.jboss.tools.fuse.transformation.model.Model;
 
@@ -73,44 +69,46 @@ import org.jboss.tools.fuse.transformation.model.Model;
 public class ModelViewer extends Composite {
 
     private static final String PREFERENCE_PREFIX = ModelViewer.class.getName() + ".";
-    private static final String FILTER_MAPPED_FIELDS_PREFERENCE = ".filterMappedFields";
-    private static final String FILTER_TYPES_PREFERENCE = ".filterTypes";
+    private static final String HIDE_MAPPED_PROPERTIES_PREFERENCE = ".hideMappedProperties";
+    private static final String SHOW_TYPES_PREFERENCE = ".showTypes";
 
-    final TransformationConfig config;
+    final TransformationManager manager;
     Model rootModel;
-    boolean showFieldTypes;
-    boolean hideMappedFields;
+    boolean showTypes;
+    boolean hideMappedProperties;
     final Map<String, List<Model>> searchMap = new HashMap<>();
     final Set<Model> searchResults = new HashSet<>();
-    protected boolean showMappedFieldsButton = true;
-    private ToolItem filterMappedFieldsButton;
-    protected boolean showSearchField = true;
     private Text searchText;
     private Label searchLabel;
     private Label clearSearchLabel;
-
-    /**
-     *
-     */
     protected final TreeViewer treeViewer;
+    private Model prevSelectedModel;
 
     /**
-     * @param config
+     * @param parent
+     * @param rootModel
+     */
+    public ModelViewer(final Composite parent,
+                       final Model rootModel) {
+        this(null, parent, rootModel, null, null);
+    }
+
+    /**
+     * @param manager
      * @param parent
      * @param rootModel
      * @param potentialDropTargets
      * @param preferenceId
      */
-    public ModelViewer(final TransformationConfig config,
-                       final Composite parent,
-                       final Model rootModel,
-                       final List<PotentialDropTarget> potentialDropTargets,
-                       final String preferenceId) {
+    ModelViewer(final TransformationManager manager,
+                final Composite parent,
+                final Model rootModel,
+                final List<PotentialDropTarget> potentialDropTargets,
+                final String preferenceId) {
         super(parent, SWT.BORDER);
         setBackground(Colors.BACKGROUND);
-        setViewOptions();
 
-        this.config = config;
+        this.manager = manager;
         this.rootModel = rootModel;
 
         updateSearchMap(rootModel);
@@ -123,66 +121,49 @@ public class ModelViewer extends Composite {
         final ToolItem collapseAllButton = new ToolItem(toolBar, SWT.PUSH);
         collapseAllButton.setImage(Images.COLLAPSE_ALL);
         final ToolItem filterTypesButton = new ToolItem(toolBar, SWT.CHECK);
-        filterTypesButton.setImage(Images.FILTER);
+        filterTypesButton.setImage(Images.SHOW_TYPES);
         filterTypesButton.setToolTipText("Show types");
 
-        if (showMappedFieldsButton) {
-            filterMappedFieldsButton = new ToolItem(toolBar, SWT.CHECK);
-            filterMappedFieldsButton.setImage(Images.HIDE_MAPPED);
-            filterMappedFieldsButton.setToolTipText("Hide mapped fields");
+        final ToolItem filterMappedPropertiesButton;
+        if (preferenceId == null) filterMappedPropertiesButton = null;
+        else {
+            filterMappedPropertiesButton = new ToolItem(toolBar, SWT.CHECK);
+            filterMappedPropertiesButton.setImage(Images.HIDE_MAPPED);
+            filterMappedPropertiesButton.setToolTipText("Hide mapped properties");
         }
 
-        if (showSearchField) {
-            Composite searchPane = new Composite(this, SWT.NONE);
-            searchPane.setLayoutData(GridDataFactory.fillDefaults().grab(true, false).create());
-            searchPane.setLayout(GridLayoutFactory.swtDefaults().numColumns(3).create());
-            searchPane.setToolTipText("Search");
-            searchPane.setBackground(getBackground());
-            searchLabel = new Label(searchPane, SWT.NONE);
-            searchLabel.setImage(Images.SEARCH);
-            searchLabel.setToolTipText("Search");
-            searchLabel.setBackground(getBackground());
-            searchText = new Text(searchPane, SWT.NONE);
-            searchText.setLayoutData(GridDataFactory.fillDefaults().grab(true, false).create());
-            searchText.setToolTipText("Search");
-            clearSearchLabel = new Label(searchPane, SWT.NONE);
-            clearSearchLabel.setImage(Images.CLEAR);
-            clearSearchLabel.setToolTipText("Search");
-            clearSearchLabel.setBackground(getBackground());
-            searchPane.addPaintListener(Util.ovalBorderPainter());
-        }
+        Composite searchPane = new Composite(this, SWT.NONE);
+        searchPane.setLayoutData(GridDataFactory.fillDefaults().grab(true, false).create());
+        searchPane.setLayout(GridLayoutFactory.swtDefaults().numColumns(3).create());
+        searchPane.setToolTipText("Search");
+        searchPane.setBackground(getBackground());
+        searchLabel = new Label(searchPane, SWT.NONE);
+        searchLabel.setImage(Images.SEARCH);
+        searchLabel.setToolTipText("Search");
+        searchLabel.setBackground(getBackground());
+        searchText = new Text(searchPane, SWT.NONE);
+        searchText.setLayoutData(GridDataFactory.fillDefaults().grab(true, false).create());
+        searchText.setToolTipText("Search");
+        clearSearchLabel = new Label(searchPane, SWT.NONE);
+        clearSearchLabel.setImage(Images.CLEAR);
+        clearSearchLabel.setToolTipText("Clear search text");
+        clearSearchLabel.setBackground(getBackground());
+        searchPane.addPaintListener(Util.ovalBorderPainter());
 
-        treeViewer = new TreeViewer(this, SWT.MULTI | SWT.H_SCROLL | SWT.V_SCROLL);
-        treeViewer.getTree().setLayoutData(GridDataFactory.fillDefaults()
-                                                          .span(2, 1)
-                                                          .grab(true, true)
-                                                          .create());
-        treeViewer.setComparator(new ViewerComparator() {
-
-            @Override
-            public int compare(final Viewer viewer,
-                               final Object model1,
-                               final Object model2) {
-                if (model1 instanceof Model && model2 instanceof Model) {
-                    return ((Model) model1).getName().compareTo(((Model) model2).getName());
-                }
-                return 0;
-            }
-        });
+        treeViewer = new TreeViewer(this, SWT.SINGLE | SWT.H_SCROLL | SWT.V_SCROLL);
+        treeViewer.getTree().setLayoutData(GridDataFactory.fillDefaults().span(2, 1).grab(true, true).create());
         treeViewer.setLabelProvider(new LabelProvider());
         ColumnViewerToolTipSupport.enableFor(treeViewer);
         treeViewer.setContentProvider(new ContentProvider());
-        if (showSearchField) {
-            treeViewer.addFilter(new ViewerFilter() {
+        treeViewer.addFilter(new ViewerFilter() {
 
-                @Override
-                public boolean select(final Viewer viewer,
-                                      final Object parentElement,
-                                      final Object element) {
-                    return show(element, !searchText.getText().trim().isEmpty());
-                }
-            });
-        }
+            @Override
+            public boolean select(final Viewer viewer,
+                                  final Object parentElement,
+                                  final Object element) {
+                return show(element, !searchText.getText().trim().isEmpty());
+            }
+        });
         if (potentialDropTargets != null) {
             treeViewer.addDragSupport(DND.DROP_MOVE,
                                       new Transfer[] {LocalSelectionTransfer.getTransfer()},
@@ -264,88 +245,77 @@ public class ModelViewer extends Composite {
 
             @Override
             public void widgetSelected(final SelectionEvent event) {
-                showFieldTypes = filterTypesButton.getSelection();
-                filterTypesButton.setToolTipText((showFieldTypes ? "Hide" : "Show") + " types");
+                showTypes = filterTypesButton.getSelection();
+                filterTypesButton.setToolTipText((showTypes ? "Hide" : "Show") + " types");
                 treeViewer.refresh();
                 if (preferenceId != null)
-                    prefs.setValue(PREFERENCE_PREFIX + preferenceId + FILTER_TYPES_PREFERENCE,
-                                   showFieldTypes);
+                    prefs.setValue(PREFERENCE_PREFIX + preferenceId + SHOW_TYPES_PREFERENCE, showTypes);
             }
         });
         if (preferenceId != null) {
-            showFieldTypes = prefs.getBoolean(PREFERENCE_PREFIX
-                                              + preferenceId
-                                              + FILTER_TYPES_PREFERENCE);
-            filterTypesButton.setSelection(showFieldTypes);
+            showTypes = prefs.getBoolean(PREFERENCE_PREFIX + preferenceId + SHOW_TYPES_PREFERENCE);
+            filterTypesButton.setSelection(showTypes);
         }
-        if (showMappedFieldsButton) {
-            filterMappedFieldsButton.addSelectionListener(new SelectionAdapter() {
+        if (filterMappedPropertiesButton != null) {
+            filterMappedPropertiesButton.addSelectionListener(new SelectionAdapter() {
 
                 @Override
                 public void widgetSelected(final SelectionEvent event) {
-                    hideMappedFields = filterMappedFieldsButton.getSelection();
-                    filterMappedFieldsButton.setToolTipText((hideMappedFields ? "Show" : "Hide")
-                                                            + " mapped fields");
+                    hideMappedProperties = filterMappedPropertiesButton.getSelection();
+                    filterMappedPropertiesButton.setToolTipText((hideMappedProperties ? "Show" : "Hide") + " mapped properties");
+                    if (hideMappedProperties) prevSelectedModel = (Model)treeViewer.getStructuredSelection().getFirstElement();
                     treeViewer.refresh();
+                    if (!hideMappedProperties && prevSelectedModel != null) select(prevSelectedModel);
                     if (preferenceId != null)
-                        prefs.setValue(PREFERENCE_PREFIX
-                                       + preferenceId
-                                       + FILTER_MAPPED_FIELDS_PREFERENCE,
-                                       hideMappedFields);
+                        prefs.setValue(PREFERENCE_PREFIX + preferenceId + HIDE_MAPPED_PROPERTIES_PREFERENCE, hideMappedProperties);
                 }
             });
             if (preferenceId != null) {
-                hideMappedFields = prefs.getBoolean(PREFERENCE_PREFIX
-                                                    + preferenceId
-                                                    + FILTER_MAPPED_FIELDS_PREFERENCE);
-                filterMappedFieldsButton.setSelection(hideMappedFields);
+                hideMappedProperties = prefs.getBoolean(PREFERENCE_PREFIX + preferenceId + HIDE_MAPPED_PROPERTIES_PREFERENCE);
+                filterMappedPropertiesButton.setSelection(hideMappedProperties);
             }
         }
-        if (showSearchField) {
-            searchLabel.addMouseListener(new MouseAdapter() {
+        searchLabel.addMouseListener(new MouseAdapter() {
 
-                @Override
-                public void mouseUp(final MouseEvent event) {
-                    searchText.setFocus();
-                }
-            });
-            clearSearchLabel.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mouseUp(final MouseEvent event) {
+                searchText.setFocus();
+            }
+        });
+        clearSearchLabel.addMouseListener(new MouseAdapter() {
 
-                @Override
-                public void mouseUp(final MouseEvent event) {
-                    searchText.setText("");
-                }
-            });
-            searchText.addModifyListener(new ModifyListener() {
+            @Override
+            public void mouseUp(final MouseEvent event) {
+                searchText.setText("");
+            }
+        });
+        searchText.addModifyListener(new ModifyListener() {
 
-                @Override
-                public void modifyText(final ModifyEvent event) {
-                    searchResults.clear();
-                    final List<Model> models = searchMap.get(searchText.getText().trim().toLowerCase());
-                    if (models != null) {
-                        for (final Model model : models) {
-                            searchResults.add(model);
-                            for (Model parent = model.getParent();
-                                 parent != null;
-                                 parent = parent.getParent()) {
-                                searchResults.add(parent);
-                            }
+            @Override
+            public void modifyText(final ModifyEvent event) {
+                searchResults.clear();
+                final List<Model> models = searchMap.get(searchText.getText().trim().toLowerCase());
+                if (models != null) {
+                    for (final Model model : models) {
+                        searchResults.add(model);
+                        for (Model parent = model.getParent(); parent != null; parent = parent.getParent()) {
+                            searchResults.add(parent);
                         }
                     }
-                    treeViewer.refresh();
                 }
-            });
-        }
+                treeViewer.refresh();
+            }
+        });
 
         if (rootModel != null) {
             treeViewer.setInput("root");
         }
 
-        if (config != null) {
-            config.addListener(new PropertyChangeListener() {
+        if (manager != null) {
+            manager.addListener(new PropertyChangeListener() {
                 @Override
                 public void propertyChange(final PropertyChangeEvent event) {
-                    if (event.getPropertyName().equals(TransformationConfig.MAPPING)) {
+                    if (event.getPropertyName().equals(Event.MAPPING)) {
                         if (!treeViewer.getControl().isDisposed()) {
                             treeViewer.refresh();
                         }
@@ -353,6 +323,10 @@ public class ModelViewer extends Composite {
                 }
             });
         }
+    }
+
+    boolean eligible(Model model) {
+        return true;
     }
 
     private void expand(final Model model) {
@@ -363,15 +337,6 @@ public class ModelViewer extends Composite {
         treeViewer.expandToLevel(model, 0);
     }
 
-    boolean mapped(final Model model) {
-        if (config == null) {
-            return false;
-        }
-        return rootModel.equals(config.getSourceModel())
-               ? !config.getMappingsForSource(model).isEmpty()
-               : !config.getMappingsForTarget(model).isEmpty();
-    }
-
     private boolean mappedOrFullyMappedParent(final Model model) {
         final List<Model> children = model.getChildren();
         for (final Model child : children) {
@@ -379,7 +344,7 @@ public class ModelViewer extends Composite {
                 return false;
             }
         }
-        return (mapped(model)) ? true : !children.isEmpty();
+        return (manager.mapped(model)) ? true : !children.isEmpty();
     }
 
     void select(final Model model) {
@@ -401,22 +366,19 @@ public class ModelViewer extends Composite {
 
     public void setModel(final Model model) {
         rootModel = model;
-        if (model != null) {
-            treeViewer.setInput("root");
-        } else {
-            treeViewer.setInput(null);
-        }
+        updateSearchMap(model);
+        treeViewer.setInput(model == null ? null : "root");
     }
 
-    boolean show(final Object element,
-                 final boolean searching) {
-        if (hideMappedFields && mappedOrFullyMappedParent((Model)element)) {
+    private boolean show(final Object element,
+                         final boolean searching) {
+        if (hideMappedProperties && mappedOrFullyMappedParent((Model)element)) {
             return false;
         }
         return !searching || searchResults.contains(element);
     }
 
-    void updateSearchMap(final Model model) {
+    private void updateSearchMap(final Model model) {
         if (model == null) {
             return;
         }
@@ -471,41 +433,30 @@ public class ModelViewer extends Composite {
 
     class LabelProvider extends StyledCellLabelProvider {
 
-        private static final String LIST_OF = "list of ";
-
         private Image getImage(final Object element) {
-            final Model model = (Model) element;
-            Image img = model.getChildren() != null && model.getChildren().size() > 0
-                        ? Images.ELEMENT
-                        : Images.ATTRIBUTE;
-            if (model.isCollection()) {
-                img = new DecorationOverlayIcon(img,
-                                                Decorations.COLLECTION,
-                                                IDecoration.BOTTOM_RIGHT).createImage();
-            }
-            if (mapped((Model)element)) {
-                return new DecorationOverlayIcon(img,
-                                                 Decorations.MAPPED,
-                                                 IDecoration.TOP_RIGHT).createImage();
-            }
-            return img;
+            final Model model = (Model)element;
+            if (model.getChildren() != null && model.getChildren().size() > 0)
+                return manager.mapped(model) ? Images.MAPPED_NODE : Images.NODE;
+            return manager.mapped(model) ? Images.MAPPED_PROPERTY : Images.PROPERTY;
         }
 
         private String getText(final Object element,
                                final StyledString text,
-                               final boolean showFieldTypesInLabel) {
-            final Model model = (Model) element;
-            text.append(model.getName());
-            if (showFieldTypesInLabel) {
-                final String type = model.getType();
-                if (type.startsWith("[")) {
-                    text.append(":", StyledString.DECORATIONS_STYLER);
-                    text.append(" " + LIST_OF, StyledString.QUALIFIER_STYLER);
-                    text.append(type.substring(1, type.length() - 1),
-                                StyledString.DECORATIONS_STYLER);
-                } else {
-                    text.append(": " + type, StyledString.DECORATIONS_STYLER);
-                }
+                               final boolean showTypes) {
+            final Model model = (Model)element;
+            final String type = model.getType();
+            boolean eligible = eligible(model);
+            text.append(model.getName(), eligible ? null : StyledString.QUALIFIER_STYLER);
+            boolean list = type.startsWith("[");
+            if (list) {
+                text.append("[", StyledString.QUALIFIER_STYLER);
+                if (showTypes) text.append(type.substring(1, type.length() - 1),
+                                           eligible ? StyledString.DECORATIONS_STYLER : StyledString.QUALIFIER_STYLER);
+                else text.append(" ");
+                text.append("]", StyledString.QUALIFIER_STYLER);
+            } else if (showTypes) {
+                text.append(": ", StyledString.QUALIFIER_STYLER);
+                text.append(type, eligible ? StyledString.DECORATIONS_STYLER : StyledString.QUALIFIER_STYLER);
             }
             return text.getString();
         }
@@ -520,17 +471,9 @@ public class ModelViewer extends Composite {
             final Object element = cell.getElement();
             final StyledString text = new StyledString();
             cell.setImage(getImage(element));
-            cell.setText(getText(element, text, showFieldTypes));
+            cell.setText(getText(element, text, showTypes));
             cell.setStyleRanges(text.getStyleRanges());
             super.update(cell);
         }
-    }
-
-    /**
-     * Provides a method implementers can override to hide certain items.
-     */
-    protected void setViewOptions() {
-        // anything that needs to be overridden, like showMappedFieldsButton
-        // can be overridden here in an extender.
     }
 }

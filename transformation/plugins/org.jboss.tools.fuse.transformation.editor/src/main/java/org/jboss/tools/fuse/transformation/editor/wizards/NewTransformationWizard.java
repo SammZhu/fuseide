@@ -20,7 +20,9 @@ import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-
+import com.sun.codemodel.JCodeModel;
+import com.sun.codemodel.JDefinedClass;
+import com.sun.codemodel.JPackage;
 import org.apache.camel.model.DataFormatDefinition;
 import org.apache.camel.model.dataformat.DataFormatsDefinition;
 import org.apache.camel.spring.CamelContextFactoryBean;
@@ -59,7 +61,6 @@ import org.jboss.tools.fuse.transformation.camel.CamelConfigBuilder.MarshalType;
 import org.jboss.tools.fuse.transformation.camel.CamelEndpoint;
 import org.jboss.tools.fuse.transformation.dozer.DozerMapperConfiguration;
 import org.jboss.tools.fuse.transformation.editor.Activator;
-import org.jboss.tools.fuse.transformation.editor.DozerConfigContentTypeDescriber;
 import org.jboss.tools.fuse.transformation.editor.internal.util.JavaUtil;
 import org.jboss.tools.fuse.transformation.editor.internal.util.Util;
 import org.jboss.tools.fuse.transformation.editor.internal.wizards.JSONPage;
@@ -70,12 +71,9 @@ import org.jboss.tools.fuse.transformation.editor.internal.wizards.OtherPage;
 import org.jboss.tools.fuse.transformation.editor.internal.wizards.StartPage;
 import org.jboss.tools.fuse.transformation.editor.internal.wizards.XMLPage;
 import org.jboss.tools.fuse.transformation.editor.internal.wizards.XformWizardPage;
+import org.jboss.tools.fuse.transformation.extensions.DozerConfigContentTypeDescriber;
 import org.jboss.tools.fuse.transformation.model.json.JsonModelGenerator;
 import org.jboss.tools.fuse.transformation.model.xml.XmlModelGenerator;
-
-import com.sun.codemodel.JCodeModel;
-import com.sun.codemodel.JDefinedClass;
-import com.sun.codemodel.JPackage;
 
 /**
  * @author brianf
@@ -83,7 +81,6 @@ import com.sun.codemodel.JPackage;
  */
 public class NewTransformationWizard extends Wizard implements INewWizard {
 
-    private static final String JAVA_PATH = Util.MAIN_PATH + "java/";
     public static final String CAMEL_CONFIG_PATH = Util.RESOURCES_PATH + "META-INF/spring/camel-context.xml";
     private static final String OBJECT_FACTORY_NAME = "ObjectFactory";
 
@@ -300,6 +297,22 @@ public class NewTransformationWizard extends Wizard implements INewWizard {
                 iter.remove();
             }
         }
+        // we really want to respond to the initial selection when the wizard
+        // was launched. if there's a project in there, we want to use it to
+        // pre- populate the project selection. This only seems to be an issue
+        // on Luna for FUSETOOLS-1443
+        if (selection != null) {
+            IStructuredSelection resourceSelection = selection;
+            if (resourceSelection.getFirstElement() instanceof IProject) {
+                uiModel.projects.clear();
+                uiModel.projects.add((IProject) resourceSelection.getFirstElement());
+            } else if (resourceSelection.getFirstElement() instanceof IJavaProject) {
+                IJavaProject jProject = (IJavaProject) resourceSelection.getFirstElement();
+                uiModel.projects.clear();
+                uiModel.projects.add(jProject.getProject());
+            }
+        }
+
         if (uiModel.projects.size() == 1) {
             uiModel.setProject(uiModel.projects.get(0));
         } else {
@@ -308,8 +321,7 @@ public class NewTransformationWizard extends Wizard implements INewWizard {
             if (resourceSelection == null || resourceSelection.size() != 1) {
                 return;
             }
-            final IProject project = ((IResource) ((IAdaptable) resourceSelection.getFirstElement())
-                    .getAdapter(IResource.class)).getProject();
+            final IProject project = ((IAdaptable)resourceSelection.getFirstElement()).getAdapter(IResource.class).getProject();
             if (uiModel.projects.contains(project)) {
                 uiModel.setProject(project);
             }
@@ -370,12 +382,12 @@ public class NewTransformationWizard extends Wizard implements INewWizard {
         // Build package name from class name
         int sequencer = 1;
         String pkgName = className.toString();
-        while (uiModel.getProject().exists(new Path(JAVA_PATH + pkgName))) {
+        while (uiModel.getProject().exists(new Path(Util.JAVA_PATH + pkgName))) {
             pkgName = className.toString() + sequencer++;
         }
         pkgName = pkgName.toLowerCase();
         // Generate model
-        final File targetClassesFolder = new File(uiModel.getProject().getFolder(JAVA_PATH).getLocationURI());
+        final File targetClassesFolder = new File(uiModel.getProject().getFolder(Util.JAVA_PATH).getLocationURI());
         switch (type) {
         case OTHER:
         case CLASS: {
@@ -409,7 +421,7 @@ public class NewTransformationWizard extends Wizard implements INewWizard {
         case XSD: {
             final XmlModelGenerator generator = new XmlModelGenerator();
             final File schemaFile = new File(uiModel.getProject().findMember(filePath).getLocationURI());
-            final JCodeModel model = generator.generateFromSchema(schemaFile, pkgName, targetClassesFolder);
+            final JCodeModel model = generator.generateFromSchema(schemaFile, null, targetClassesFolder);
             String elementName = null;
             if (isSource) {
                 elementName = uiModel.getSourceClassName();
@@ -432,7 +444,7 @@ public class NewTransformationWizard extends Wizard implements INewWizard {
             final XmlModelGenerator generator = new XmlModelGenerator();
             final File schemaPath = new File(uiModel.getProject().getFile(filePath + ".xsd").getLocationURI());
             final JCodeModel model = generator.generateFromInstance(new File(uiModel.getProject().findMember(filePath)
-                    .getLocationURI()), schemaPath, pkgName, targetClassesFolder);
+                    .getLocationURI()), schemaPath, null, targetClassesFolder);
             String elementName = null;
             if (isSource) {
                 elementName = uiModel.getSourceClassName();
@@ -550,7 +562,7 @@ public class NewTransformationWizard extends Wizard implements INewWizard {
     private void addDataFormatDefinitionDependency(DataFormatDefinition dataFormat) {
         Dependency dep = null;
 
-        if (dataFormat != null) {
+        if (dataFormat != null && dataFormat.getDataFormatName() != null) {
             if (dataFormat.getDataFormatName().equalsIgnoreCase("json-jackson")) {
                 dep = createDependency("org.apache.camel", "camel-jackson", org.fusesource.ide.camel.editor.Activator
                         .getDefault().getCamelVersion());

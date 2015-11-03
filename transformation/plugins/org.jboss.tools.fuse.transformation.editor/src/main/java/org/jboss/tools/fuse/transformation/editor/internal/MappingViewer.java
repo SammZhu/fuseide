@@ -11,9 +11,11 @@ package org.jboss.tools.fuse.transformation.editor.internal;
 
 import java.util.Iterator;
 import java.util.List;
-
+import org.eclipse.jface.layout.GridDataFactory;
+import org.eclipse.jface.layout.GridLayoutFactory;
 import org.eclipse.jface.util.LocalSelectionTransfer;
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.custom.CLabel;
 import org.eclipse.swt.dnd.DND;
 import org.eclipse.swt.dnd.DropTarget;
 import org.eclipse.swt.dnd.DropTargetAdapter;
@@ -21,48 +23,61 @@ import org.eclipse.swt.dnd.DropTargetEvent;
 import org.eclipse.swt.dnd.Transfer;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.widgets.Composite;
-import org.eclipse.swt.widgets.Text;
 import org.jboss.tools.fuse.transformation.Expression;
 import org.jboss.tools.fuse.transformation.MappingOperation;
 import org.jboss.tools.fuse.transformation.MappingType;
 import org.jboss.tools.fuse.transformation.Variable;
 import org.jboss.tools.fuse.transformation.editor.Activator;
-import org.jboss.tools.fuse.transformation.editor.internal.util.CanceledDialogException;
-import org.jboss.tools.fuse.transformation.editor.internal.util.TransformationConfig;
+import org.jboss.tools.fuse.transformation.editor.internal.util.TransformationManager;
 import org.jboss.tools.fuse.transformation.editor.internal.util.Util;
 import org.jboss.tools.fuse.transformation.editor.internal.util.Util.Colors;
+import org.jboss.tools.fuse.transformation.editor.internal.util.Util.Images;
 import org.jboss.tools.fuse.transformation.model.Model;
 
 abstract class MappingViewer {
 
-    final TransformationConfig config;
+    final TransformationManager manager;
     MappingOperation<?, ?> mapping;
-    Text sourceText;
-    Text targetText;
+    Composite sourcePropPane;
+    Composite targetPropPane;
     DropTarget sourceDropTarget;
-    DropTarget targetDropTarget;
-    final List<PotentialDropTarget> potentialDropTargets;
+    private DropTarget targetDropTarget;
+    private final List<PotentialDropTarget> potentialDropTargets;
 
-    MappingViewer(final TransformationConfig config,
-                  final List<PotentialDropTarget> potentialDropTargets) {
-        this.config = config;
+    MappingViewer(TransformationManager manager,
+                  List<PotentialDropTarget> potentialDropTargets) {
+        this.manager = manager;
         this.potentialDropTargets = potentialDropTargets;
     }
 
-    void createSourceText(final Composite parent,
-                          final int style) {
-        sourceText = createText(parent, style);
+    Composite createPropertyPane(Composite parent,
+                                 int style) {
+        Composite pane = new Composite(parent, SWT.BORDER);
+        pane.setLayout(GridLayoutFactory.fillDefaults().create());
+        CLabel label = new CLabel(pane, style);
+        label.setMargins(1, 1, 1, 1);
+        label.setLayoutData(GridDataFactory.fillDefaults().grab(true, false).create());
+        return pane;
+    }
+
+    void createSourcePropertyPane(Composite parent,
+                                  int style) {
+        sourcePropPane = createPropertyPane(parent, style);
         setSourceText();
-        sourceDropTarget = new DropTarget(sourceText, DND.DROP_MOVE);
+        CLabel label = (CLabel)sourcePropPane.getChildren()[0];
+        sourceDropTarget = new DropTarget(label, DND.DROP_MOVE);
         sourceDropTarget.setTransfer(new Transfer[] {LocalSelectionTransfer.getTransfer()});
-        sourceDropTarget.addDropListener(new DropListener(sourceText) {
+        sourceDropTarget.addDropListener(new DropListener(label) {
 
             @Override
             boolean draggingFromValidObject() {
-                return Util.draggingFromValidSource(config)
-                       && Util.validSourceAndTarget(Util.draggedObject(),
-                                                    mapping.getTarget(),
-                                                    config);
+                Object source = Util.draggedObject();
+                boolean valid = Util.draggingFromValidSource(manager)
+                                && Util.validSourceAndTarget(source, mapping.getTarget(), manager);
+                // Ensure property types are the same if old property is in transformation mapping
+                if (valid && mapping.getType() == MappingType.TRANSFORMATION)
+                    return source instanceof Model && ((Model)source).getType().equals(((Model)mapping.getSource()).getType());
+                return valid;
             }
 
             @Override
@@ -70,32 +85,29 @@ abstract class MappingViewer {
                 dropOnSource();
             }
         });
-        potentialDropTargets.add(new PotentialDropTarget(sourceText) {
+        potentialDropTargets.add(new PotentialDropTarget(label) {
 
             @Override
             public boolean valid() {
-                return mapping.getType() != MappingType.CUSTOM
-                       && Util.draggingFromValidSource(config)
-                       && Util.validSourceAndTarget(Util.draggedObject(),
-                                                    mapping.getTarget(),
-                                                    config);
+                return mapping.getType() != MappingType.TRANSFORMATION
+                       && Util.draggingFromValidSource(manager)
+                       && Util.validSourceAndTarget(Util.draggedObject(), mapping.getTarget(), manager);
             }
         });
     }
 
-    void createTargetText(final Composite parent) {
-        targetText = createText(parent, SWT.NONE);
+    void createTargetPropertyPane(Composite parent) {
+        targetPropPane = createPropertyPane(parent, SWT.NONE);
         setTargetText();
-        targetDropTarget = new DropTarget(targetText, DND.DROP_MOVE);
+        CLabel label = (CLabel)targetPropPane.getChildren()[0];
+        targetDropTarget = new DropTarget(label, DND.DROP_MOVE);
         targetDropTarget.setTransfer(new Transfer[] {LocalSelectionTransfer.getTransfer()});
-        targetDropTarget.addDropListener(new DropListener(targetText) {
+        targetDropTarget.addDropListener(new DropListener(label) {
 
             @Override
             boolean draggingFromValidObject() {
-                return Util.draggingFromValidTarget(config)
-                       && Util.validSourceAndTarget(mapping.getSource(),
-                                                    Util.draggedObject(),
-                                                    config);
+                return Util.draggingFromValidTarget(manager)
+                       && Util.validSourceAndTarget(mapping.getSource(), Util.draggedObject(), manager);
             }
 
             @Override
@@ -103,205 +115,129 @@ abstract class MappingViewer {
                 dropOnTarget();
             }
         });
-        potentialDropTargets.add(new PotentialDropTarget(targetText) {
+        potentialDropTargets.add(new PotentialDropTarget(label) {
 
             @Override
             public boolean valid() {
-                return mapping.getType() != MappingType.CUSTOM
-                       && Util.draggingFromValidTarget(config)
+                return mapping.getType() != MappingType.TRANSFORMATION
+                       && Util.draggingFromValidTarget(manager)
                        && Util.validSourceAndTarget(mapping.getSource(),
                                                     Util.draggedObject(),
-                                                    config);
+                                                    manager);
             }
         });
-    }
-
-    Text createText(final Composite parent,
-                    final int style) {
-        final Text text = new Text(parent, style | SWT.BORDER);
-        text.setEditable(false);
-        return text;
     }
 
     void dispose() {
         sourceDropTarget.dispose();
         targetDropTarget.dispose();
-        for (final Iterator<PotentialDropTarget> iter = potentialDropTargets.iterator();
+        for (Iterator<PotentialDropTarget> iter = potentialDropTargets.iterator();
              iter.hasNext();) {
-               final PotentialDropTarget potentialDropTarget = iter.next();
-               if (potentialDropTarget.control == sourceText
-                   || potentialDropTarget.control == targetText) {
+               PotentialDropTarget potentialDropTarget = iter.next();
+               if (potentialDropTarget.control == sourcePropPane.getChildren()[0]
+                   || potentialDropTarget.control == targetPropPane.getChildren()[0]) {
                    iter.remove();
                }
         }
     }
 
-    void dropOnSource() throws Exception {
+    private void dropOnSource() throws Exception {
         setSource(Util.draggedObject());
     }
 
-    void dropOnTarget() throws Exception {
+    private void dropOnTarget() throws Exception {
         setTarget((Model)Util.draggedObject());
     }
 
-    boolean equals(final MappingOperation<?, ?> mapping,
-                   final Object object) {
-        if (mapping == object) {
-            return true;
-        }
-        if (mapping == null || object == null) {
-            return false;
-        }
-        if (!(object instanceof MappingOperation<?, ?>)) {
-            return false;
-        }
-        final MappingOperation<?, ?> mapping2 = (MappingOperation<?, ?>)object;
-        if (mapping.getSource() == mapping2.getSource()
-            && mapping.getTarget() == mapping2.getTarget()) {
-            return true;
-        }
-        if (mapping.getSource() != null && !mapping.getSource().equals(mapping2.getSource())) {
-            return false;
-        }
-        if (mapping.getTarget() != null && !mapping.getTarget().equals(mapping2.getTarget())) {
-            return false;
-        }
+    boolean equals(MappingOperation<?, ?> mapping,
+                   Object object) {
+        if (mapping == object) return true;
+        if (mapping == null || object == null) return false;
+        if (!(object instanceof MappingOperation<?, ?>)) return false;
+        MappingOperation<?, ?> mapping2 = (MappingOperation<?, ?>)object;
+        if (mapping.getSource() == mapping2.getSource() && mapping.getTarget() == mapping2.getTarget()) return true;
+        if (mapping.getSource() != null && !mapping.getSource().equals(mapping2.getSource())) return false;
+        if (mapping.getTarget() != null && !mapping.getTarget().equals(mapping2.getTarget())) return false;
         return true;
     }
 
-    String name(final Object object) {
-        if (object instanceof Model) {
-            return ((Model)object).getName();
-        } else if (object instanceof Variable) {
-            return "${" + ((Variable)object).getName() + "}";
-        } else if (object instanceof Expression) {
-            return ((Expression)object).getLanguage();
-        }
+    String name(Object object) {
+        if (object instanceof Model) return ((Model)object).getName();
+        if (object instanceof Variable) return ((Variable)object).getName();
+        if (object instanceof Expression) return ((Expression)object).getLanguage();
         return "";
     }
 
-    void setSource(final Object sourceObject) throws Exception {
-        final Model targetModel = (Model)mapping.getTarget();
-        if (targetModel == null) {
-            mapping = config.setSource(mapping, sourceObject, null, null);
-        } else {
-            final boolean sourceIsOrInCollection =
-                sourceObject instanceof Model && Util.isOrInCollection((Model)sourceObject);
-            final boolean targetIsOrInCollection = Util.isOrInCollection(targetModel);
-            if (sourceIsOrInCollection == targetIsOrInCollection) {
-                mapping = config.setSource(mapping, sourceObject, null, null);
-            } else try {
-                final List<Integer> sourceIndexes = sourceIsOrInCollection
-                                                    ? Util.indexes(sourceText.getShell(),
-                                                                   (Model)sourceObject, true)
-                                                    : null;
-                final List<Integer> targetIndexes = targetIsOrInCollection
-                                                    ? Util.indexes(targetText.getShell(),
-                                                                   targetModel, false)
-                                                    : null;
-                mapping = config.setSource(mapping, sourceObject, sourceIndexes, targetIndexes);
-            } catch (CanceledDialogException e) {
-                return;
-            }
-        }
-        if (mapping != null) {
-            Util.updateDateFormat(sourceText.getShell(),  mapping);
-        }
-        config.save();
+    void setSource(Object source) throws Exception {
+        mapping = manager.setSource(mapping, source);
+        Util.updateDateFormat(sourcePropPane.getShell(), mapping);
+        manager.save();
     }
 
     void setSourceText() {
-        setText(sourceText, mapping.getSource());
+        setText(sourcePropPane, mapping.getSource());
     }
 
-    void setTarget(final Model targetModel) throws Exception {
-        final Object sourceObject = mapping.getSource();
-        if (sourceObject == null) {
-            mapping = config.setTarget(mapping, targetModel, null, null);
-        } else {
-            final boolean sourceIsOrInCollection =
-                sourceObject instanceof Model && Util.isOrInCollection((Model)sourceObject);
-            final boolean targetIsOrInCollection = Util.isOrInCollection(targetModel);
-            if (sourceIsOrInCollection == targetIsOrInCollection) {
-                mapping = config.setTarget(mapping, targetModel, null, null);
-            } else try {
-                final List<Integer> sourceIndexes = sourceIsOrInCollection
-                                                    ? Util.indexes(sourceText.getShell(),
-                                                                   (Model)sourceObject, true)
-                                                    : null;
-                final List<Integer> targetIndexes = targetIsOrInCollection
-                                                    ? Util.indexes(targetText.getShell(),
-                                                                   targetModel, false)
-                                                    : null;
-                mapping = config.setTarget(mapping, targetModel, sourceIndexes, targetIndexes);
-            } catch (CanceledDialogException e) {
-                return;
-            }
-        }
-        if (mapping != null) {
-            Util.updateDateFormat(sourceText.getShell(),  mapping);
-        }
-        config.save();
+    void setTarget(Model target) throws Exception {
+        mapping = manager.setTarget(mapping, target);
+        Util.updateDateFormat(sourcePropPane.getShell(), mapping);
+        manager.save();
     }
 
     void setTargetText() {
-        setText(targetText, mapping.getTarget());
+        setText(targetPropPane, mapping.getTarget());
     }
 
-    private void setText(final Text text,
-                         final Object object) {
-        text.setText(name(object));
+    private void setText(Composite propPane,
+                         Object object) {
+        CLabel label = (CLabel)propPane.getChildren()[0];
+        label.setText(name(object));
         if (object instanceof Model) {
-            final Model model = (Model)object;
-            text.setToolTipText(config.fullyQualifiedName(model));
-            if (mapping.getType() == MappingType.CUSTOM && text == sourceText) {
-                text.setBackground(Colors.FUNCTION);
-            } else {
-                text.setBackground(Colors.BACKGROUND);
-            }
-            text.setForeground(Colors.FOREGROUND);
+            label.setToolTipText(Util.fullyQualifiedName((Model)object));
+            label.setBackground(Colors.BACKGROUND);
+            label.setForeground(Colors.FOREGROUND);
+            label.setImage(Images.PROPERTY);
         } else if (object instanceof Variable) {
-            text.setToolTipText(variableToolTip((Variable)object));
-            text.setBackground(Colors.BACKGROUND);
-            text.setForeground(Colors.VARIABLE);
+            label.setToolTipText(variableToolTip((Variable)object));
+            label.setBackground(Colors.BACKGROUND);
+            label.setForeground(Colors.FOREGROUND);
+            label.setImage(Images.VARIABLE);
         } else if (object instanceof Expression) {
-            text.setToolTipText(((Expression)object).getExpression().replace("\\${", "${"));
-            text.setBackground(Colors.BACKGROUND);
-            text.setForeground(Colors.EXPRESSION);
+            label.setToolTipText(((Expression)object).getExpression().replace("\\${", "${"));
+            label.setBackground(Colors.BACKGROUND);
+            label.setForeground(Colors.EXPRESSION);
         } else {
-            text.setToolTipText("");
-            text.setBackground(Colors.BACKGROUND);
-            text.setForeground(Colors.FOREGROUND);
+            label.setToolTipText("");
+            label.setBackground(Colors.BACKGROUND);
+            label.setForeground(Colors.FOREGROUND);
         }
     }
 
-    String variableToolTip(final Variable variable) {
+    private String variableToolTip(Variable variable) {
         return "\"" + variable.getValue() + "\"";
     }
 
-    void variableValueUpdated(final Variable variable) {
-        if (mapping != null && variable.equals(mapping.getSource())) {
-            sourceText.setToolTipText(variableToolTip(variable));
-        }
+    void variableValueUpdated(Variable variable) {
+        if (mapping != null && variable.equals(mapping.getSource())) sourcePropPane.setToolTipText(variableToolTip(variable));
     }
 
-    abstract class DropListener extends DropTargetAdapter {
+    private abstract class DropListener extends DropTargetAdapter {
 
-        private final Text dropText;
+        private final CLabel dropLabel;
         private Color background;
         private Color foreground;
 
-        DropListener(final Text dropText) {
-            this.dropText = dropText;
+        private DropListener(final CLabel dropLabel) {
+            this.dropLabel = dropLabel;
         }
 
         @Override
         public final void dragEnter(final DropTargetEvent event) {
-            background = dropText.getBackground();
-            foreground = dropText.getForeground();
-            if (mapping.getType() != MappingType.CUSTOM && draggingFromValidObject()) {
-                dropText.setBackground(Colors.DROP_TARGET_BACKGROUND);
-                dropText.setForeground(Colors.DROP_TARGET_FOREGROUND);
+            background = dropLabel.getBackground();
+            foreground = dropLabel.getForeground();
+            if (draggingFromValidObject()) {
+                dropLabel.setBackground(Colors.DROP_TARGET_BACKGROUND);
+                dropLabel.setForeground(Colors.DROP_TARGET_FOREGROUND);
             } else {
                 event.detail = DND.DROP_NONE;
             }
@@ -311,8 +247,8 @@ abstract class MappingViewer {
 
         @Override
         public final void dragLeave(final DropTargetEvent event) {
-            dropText.setBackground(background);
-            dropText.setForeground(foreground);
+            dropLabel.setBackground(background);
+            dropLabel.setForeground(foreground);
         }
 
         abstract void drop() throws Exception;
@@ -320,9 +256,7 @@ abstract class MappingViewer {
         @Override
         public final void drop(final DropTargetEvent event) {
             try {
-                if (draggingFromValidObject()) {
-                    drop();
-                }
+                if (draggingFromValidObject()) drop();
             } catch (final Exception e) {
                 Activator.error(e);
             }

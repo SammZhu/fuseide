@@ -11,14 +11,16 @@ package org.jboss.tools.fuse.transformation.editor;
 
 import java.util.HashMap;
 import java.util.Map;
-
 import org.eclipse.core.runtime.Status;
 import org.eclipse.jface.dialogs.ErrorDialog;
+import org.eclipse.jface.preference.IPreferenceStore;
+import org.eclipse.jface.preference.PreferenceConverter;
 import org.eclipse.jface.resource.ImageDescriptor;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.RGB;
 import org.eclipse.swt.widgets.Display;
 import org.eclipse.ui.plugin.AbstractUIPlugin;
+import org.jboss.tools.fuse.transformation.editor.internal.MappingDetailViewer;
 import org.osgi.framework.BundleContext;
 
 /**
@@ -28,8 +30,9 @@ public class Activator extends AbstractUIPlugin {
 
     // The shared instance
     private static Activator plugin;
-    
-    public static String PLUGIN_ID = "org.jboss.tools.fuse.transformation.editor";
+
+    public static final String PLUGIN_ID = "org.jboss.tools.fuse.transformation.editor";
+    public static final String TRANSFORMATION_EXTENSION_POINT = PLUGIN_ID + ".function";
 
     /**
      * @param red
@@ -50,19 +53,23 @@ public class Activator extends AbstractUIPlugin {
         return color;
     }
 
+    public static IPreferenceStore preferences() {
+        return plugin.getPreferenceStore();
+    }
+
     /**
      * @param error
      */
-    public static void error(final Throwable error) {
-        final Status status = new Status(Status.ERROR,
-                                         plugin.getBundle().getSymbolicName(),
-                                         "Unexpected error: " + error.getMessage(),
-                                         error);
+    public static void error(Throwable error) {
+        Status status = new Status(Status.ERROR,
+                                   plugin.getBundle().getSymbolicName(),
+                                   "Unexpected error: " + error.getMessage(),
+                                   error);
         ErrorDialog.openError(Display.getCurrent().getActiveShell(),
                               "Error",
                               status.getMessage(),
                               status);
-        plugin.getLog().log(status);
+        log(status);
     }
 
     /**
@@ -78,6 +85,18 @@ public class Activator extends AbstractUIPlugin {
         img = ImageDescriptor.createFromURL(plugin.getBundle().getEntry("icons/" + name));
         plugin.getImageRegistry().put(key, img);
         return img;
+    }
+
+    public static void log(int status,
+                           String message) {
+        log(new Status(status, plugin.getBundle().getSymbolicName(), message));
+    }
+
+    /**
+     * @param status
+     */
+    public static void log(Status status) {
+        plugin.getLog().log(status);
     }
 
     /**
@@ -105,6 +124,13 @@ public class Activator extends AbstractUIPlugin {
     public void start(final BundleContext context) throws Exception {
         super.start(context);
         plugin = this;
+        PreferenceConverter.setDefault(getPreferenceStore(),
+                                       MappingDetailViewer.TRANSFORMATION_FOREGROUND_PREFERENCE,
+                                       new RGB(0, 0, 0));
+        PreferenceConverter.setDefault(getPreferenceStore(),
+                                       MappingDetailViewer.TRANSFORMATION_BACKGROUND_PREFERENCE,
+                                       new RGB(255, 255, 0));
+        preferences().setDefault(MappingDetailViewer.TRANSFORMATION_USER_FRIENDLY_FORMAT_PREFERENCE, true);
     }
 
     /**

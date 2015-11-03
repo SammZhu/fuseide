@@ -12,7 +12,6 @@ package org.jboss.tools.fuse.transformation.editor.internal.wizards;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
-
 import org.eclipse.core.resources.IFile;
 import org.eclipse.core.resources.IFolder;
 import org.eclipse.core.resources.IProject;
@@ -64,7 +63,6 @@ import org.jboss.tools.fuse.transformation.editor.internal.util.Util;
  *
  *
  */
-@SuppressWarnings("restriction")
 public class TransformTestWizardPage extends NewTypeWizardPage {
 
     protected static final String CAMEL_FILE_PATH = "TransformTestWizardPage.CamelFilePath"; //$NON-NLS-1$
@@ -357,8 +355,11 @@ public class TransformTestWizardPage extends NewTypeWizardPage {
     }
 
     /**
-     * checks if we need to add a maven dependency for the chosen component
-     * and inserts it into the pom.xml if needed
+     * Checks if we need to add a maven dependency for the chosen component and inserts it into the pom.xml if needed.
+     *
+     * @param project
+     * @param compDeps
+     * @throws CoreException
      */
     public void updateMavenDependencies(IProject project, List<Dependency> compDeps) throws CoreException {
     	Util.updateMavenDependencies(compDeps, project);
